@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/png"
 	"os"
 
@@ -27,11 +28,20 @@ type (
 		X     int     `json:"x"`
 		Y     int     `json:"y"`
 	}
+
+	Position string
 )
 
 var (
 	//go:embed SourceHanSansCN-Normal.otf
 	sourceHanSansCNNormal []byte
+
+	LeftTop     Position = "LeftTop"
+	LeftBottom  Position = "LeftBottom"
+	RightTop    Position = "RightTop"
+	RightBottom Position = "RightBottom"
+	Center      Position = "Center"
+	// Full        Position = "Full"
 )
 
 func (wh *WatermarkHandle) Check() bool {
@@ -85,6 +95,27 @@ func NewFace(size float64, dpi float64) (font.Face, error) {
 	})
 }
 
+func WriteWordMaskEasy(word string, face font.Face, bgImg image.Image, position Position, color color.Color) image.Image {
+	bgImgBounds := bgImg.Bounds()
+
+	dx, dy := int(float64(bgImgBounds.Max.X)*0.1), int(float64(bgImgBounds.Max.Y)*0.1)
+	x, y := dx, dy
+	switch position {
+	case LeftTop:
+		x, y = dx, dy
+	case LeftBottom:
+		x, y = dx, bgImgBounds.Max.Y-dy
+	case RightTop:
+		x, y = bgImgBounds.Max.X-dx, dy
+	case RightBottom:
+		x, y = bgImgBounds.Max.X-dx, bgImgBounds.Max.Y-dy
+	case Center:
+		x, y = (bgImgBounds.Max.X-dx)/2, (bgImgBounds.Max.Y-dy)/2
+	}
+
+	return WriteWordMask(word, face, bgImg, x, y, color)
+}
+
 func WriteWordMask(word string, face font.Face, bgImg image.Image, x, y int, color color.Color) image.Image {
 	// Calculate text bounds
 	bounds, _ := font.BoundString(face, word)
@@ -95,12 +126,7 @@ func WriteWordMask(word string, face font.Face, bgImg image.Image, x, y int, col
 	dstImg := image.NewRGBA(bgImg.Bounds())
 
 	// Copy the original image to the new image
-	boundsImg := bgImg.Bounds()
-	for py := boundsImg.Min.Y; py < boundsImg.Max.Y; py++ {
-		for px := boundsImg.Min.X; px < boundsImg.Max.X; px++ {
-			dstImg.Set(px, py, bgImg.At(px, py))
-		}
-	}
+	draw.Draw(dstImg, bgImg.Bounds(), bgImg, image.Point{}, draw.Src)
 
 	// Create a drawer for the text
 	drawer := &font.Drawer{

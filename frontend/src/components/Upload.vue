@@ -51,6 +51,7 @@ const preview = () => {
     return;
   }
 
+  saveConfig();
   clearTimeout(previewTimeout);
   previewTimeout = setTimeout(previewInner, 1000);
 };
