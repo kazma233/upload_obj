@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"math"
 	"os"
 
 	"golang.org/x/image/font"
@@ -20,17 +21,23 @@ import (
 )
 
 type (
-	WatermarkHandle struct {
-		Text  string  `json:"text"`
-		Size  float64 `json:"size"`
-		Dpi   float64 `json:"dpi"`
-		Color string  `json:"color"` // hex color; eg: #FF0000
-		X     int     `json:"x"`
-		Y     int     `json:"y"`
-	}
-
 	Position string
+
+	WatermarkHandle struct {
+		Text  string   `json:"text"`
+		Size  float64  `json:"size"`
+		Dpi   float64  `json:"dpi"`
+		Color string   `json:"color"` // hex color; eg: #FF0000
+		X     int      `json:"x"`
+		Y     int      `json:"y"`
+		Posi  Position `json:"position"`
+		Angle float64  `json:"angle"` // 旋转角度，单位度
+	}
 )
+
+func (p *Position) String() string {
+	return string(*p)
+}
 
 var (
 	//go:embed SourceHanSansCN-Normal.otf
@@ -41,14 +48,14 @@ var (
 	RightTop    Position = "RightTop"
 	RightBottom Position = "RightBottom"
 	Center      Position = "Center"
-	// Full        Position = "Full"
+	Full        Position = "Full"
 )
 
 func (wh *WatermarkHandle) Check() bool {
 	return wh.Text != ""
 }
 
-func (wh *WatermarkHandle) Do(bgImg image.Image) (image.Image, error) {
+func (wh *WatermarkHandle) Do(filePath string) (image.Image, error) {
 	face, err := NewFace(wh.Size, wh.Dpi)
 	if err != nil {
 		return nil, err
@@ -70,6 +77,19 @@ func (wh *WatermarkHandle) Do(bgImg image.Image) (image.Image, error) {
 		wh.Color = "#000000"
 	}
 
+	// 使用filePath创建dstImg
+	bgImg, err := OpenImg(filePath)
+	if err != nil {
+		return nil, err
+	}
+	dstImg := image.NewRGBA(bgImg.Bounds())
+	draw.Draw(dstImg, bgImg.Bounds(), bgImg, image.Point{}, draw.Src)
+
+	if wh.Posi != "" {
+		WriteWordMaskEasy(wh.Text, face, dstImg, wh.Posi, ParseHexColorFast(wh.Color), wh.Angle)
+		return dstImg, nil
+	}
+
 	if wh.X < 0 {
 		wh.X = 100
 	}
@@ -77,8 +97,8 @@ func (wh *WatermarkHandle) Do(bgImg image.Image) (image.Image, error) {
 	if wh.Y < 0 {
 		wh.Y = 100
 	}
-
-	return WriteWordMask(wh.Text, face, bgImg, wh.X, wh.Y, ParseHexColorFast(wh.Color)), nil
+	WriteWordMask(wh.Text, face, dstImg, wh.X, wh.Y, ParseHexColorFast(wh.Color), wh.Angle)
+	return dstImg, nil
 }
 
 func NewFace(size float64, dpi float64) (font.Face, error) {
@@ -95,11 +115,29 @@ func NewFace(size float64, dpi float64) (font.Face, error) {
 	})
 }
 
-func WriteWordMaskEasy(word string, face font.Face, bgImg image.Image, position Position, color color.Color) image.Image {
-	bgImgBounds := bgImg.Bounds()
+func WriteWordMaskEasy(word string, face font.Face, dst draw.Image, position Position, color color.Color, angle float64) {
+	bgImgBounds := dst.Bounds()
 
 	dx, dy := int(float64(bgImgBounds.Max.X)*0.1), int(float64(bgImgBounds.Max.Y)*0.1)
 	x, y := dx, dy
+	ang := angle
+
+	if position == Full {
+		// 平铺水印
+		bounds, _ := font.BoundString(face, word)
+		textWidth := (bounds.Max.X - bounds.Min.X).Ceil()
+		textHeight := (bounds.Max.Y - bounds.Min.Y).Ceil()
+		intervalX := textWidth + 40  // 水印横向间隔
+		intervalY := textHeight + 40 // 水印纵向间隔
+
+		for y := 0; y < bgImgBounds.Dy(); y += intervalY {
+			for x := 0; x < bgImgBounds.Dx(); x += intervalX {
+				WriteWordMask(word, face, dst, x, y, color, ang)
+			}
+		}
+		return
+	}
+
 	switch position {
 	case LeftTop:
 		x, y = dx, dy
@@ -113,43 +151,120 @@ func WriteWordMaskEasy(word string, face font.Face, bgImg image.Image, position 
 		x, y = (bgImgBounds.Max.X-dx)/2, (bgImgBounds.Max.Y-dy)/2
 	}
 
-	return WriteWordMask(word, face, bgImg, x, y, color)
+	WriteWordMask(word, face, dst, x, y, color, ang)
 }
 
-func WriteWordMask(word string, face font.Face, bgImg image.Image, x, y int, color color.Color) image.Image {
+// 修改为直接在传入的dst上绘制水印，不再返回新图片
+func WriteWordMask(word string, face font.Face, dst draw.Image, x, y int, color color.Color, angle float64) {
 	// Calculate text bounds
 	bounds, _ := font.BoundString(face, word)
 	textWidth := (bounds.Max.X - bounds.Min.X).Ceil()
 	textHeight := (bounds.Max.Y - bounds.Min.Y).Ceil()
 
-	// Create a new RGBA image with the same size as the original
-	dstImg := image.NewRGBA(bgImg.Bounds())
+	if angle == 0 {
+		// Create a drawer for the text
+		drawer := &font.Drawer{
+			Dst:  dst,
+			Src:  image.NewUniform(color),
+			Face: face,
+		}
 
-	// Copy the original image to the new image
-	draw.Draw(dstImg, bgImg.Bounds(), bgImg, image.Point{}, draw.Src)
+		// Adjust position to center the text if x or y is negative
+		if x < 0 {
+			x = (dst.Bounds().Dx() - textWidth) / 2
+		}
+		if y < 0 {
+			y = (dst.Bounds().Dy()-textHeight)/2 + (textHeight * 4 / 5) // Adjust for baseline
+		} else {
+			y += textHeight // Adjust for baseline
+		}
 
-	// Create a drawer for the text
+		// Draw the text
+		drawer.Dot = fixed.P(x, y)
+		drawer.DrawString(word)
+		return
+	}
+
+	// 旋转模式：先绘制到足够大的小图再旋转粘贴，避免裁剪
+	diag := int(math.Ceil(math.Hypot(float64(textWidth), float64(textHeight))))
+	canvasW, canvasH := diag, diag
+	txtImg := image.NewRGBA(image.Rect(0, 0, canvasW, canvasH))
+	// 将文本绘制在中心
 	drawer := &font.Drawer{
-		Dst:  dstImg,
+		Dst:  txtImg,
 		Src:  image.NewUniform(color),
 		Face: face,
+		Dot:  fixed.P((canvasW-textWidth)/2, (canvasH+textHeight*4/5)/2), // baseline居中
 	}
+	drawer.DrawString(word)
+	rotImg := RotateImage(txtImg, angle)
+	// 粘贴到目标图
+	offset := image.Pt(x, y)
+	for py := 0; py < rotImg.Bounds().Dy(); py++ {
+		for px := 0; px < rotImg.Bounds().Dx(); px++ {
+			c := rotImg.At(px, py)
+			_, _, _, a := c.RGBA()
+			if a > 0 {
+				dst.Set(px+offset.X, py+offset.Y, c)
+			}
+		}
+	}
+}
 
-	// Adjust position to center the text if x or y is negative
-	if x < 0 {
-		x = (bgImg.Bounds().Dx() - textWidth) / 2
+// 旋转文本绘制辅助函数
+func DrawRotatedText(dst *image.RGBA, word string, face font.Face, x, y int, color color.Color, angle float64) {
+	// 1. 先将文本绘制到一个小图
+	bounds, _ := font.BoundString(face, word)
+	w := (bounds.Max.X - bounds.Min.X).Ceil()
+	h := (bounds.Max.Y - bounds.Min.Y).Ceil()
+	if w <= 0 || h <= 0 {
+		return
 	}
-	if y < 0 {
-		y = (bgImg.Bounds().Dy()-textHeight)/2 + (textHeight * 4 / 5) // Adjust for baseline
-	} else {
-		y += textHeight // Adjust for baseline
+	txtImg := image.NewRGBA(image.Rect(0, 0, w, h))
+	drawer := &font.Drawer{
+		Dst:  txtImg,
+		Src:  image.NewUniform(color),
+		Face: face,
+		Dot:  fixed.P(0, h*4/5), // baseline
 	}
-
-	// Draw the text
-	drawer.Dot = fixed.P(x, y)
 	drawer.DrawString(word)
 
-	return dstImg
+	// 2. 旋转小图
+	rotImg := RotateImage(txtImg, angle)
+
+	// 3. 粘贴到目标图
+	offset := image.Pt(x, y)
+	for py := 0; py < rotImg.Bounds().Dy(); py++ {
+		for px := 0; px < rotImg.Bounds().Dx(); px++ {
+			c := rotImg.At(px, py)
+			_, _, _, a := c.RGBA()
+			if a > 0 {
+				dst.Set(px+offset.X, py+offset.Y, c)
+			}
+		}
+	}
+}
+
+// 简单最近邻旋转实现（角度为度）
+func RotateImage(src *image.RGBA, angle float64) *image.RGBA {
+	rad := angle * 3.14159265 / 180.0
+	cosA := math.Cos(rad)
+	sinA := math.Sin(rad)
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	cx, cy := float64(w)/2, float64(h)/2
+	rotImg := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dx := float64(x) - cx
+			dy := float64(y) - cy
+			srcX := int(cx + dx*cosA - dy*sinA)
+			srcY := int(cy + dx*sinA + dy*cosA)
+			if srcX >= 0 && srcX < w && srcY >= 0 && srcY < h {
+				rotImg.Set(x, y, src.At(srcX, srcY))
+			}
+		}
+	}
+	return rotImg
 }
 
 func ParseHexColorFast(s string) color.RGBA {

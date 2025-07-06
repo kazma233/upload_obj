@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/url"
@@ -55,14 +54,14 @@ func (a *App) SelectFile() string {
 	return fp
 }
 
-func (a *App) UploadFile(filePath string, strategyType upload.BedType) (string, error) {
+func (a *App) UploadFile(filePath string, strategyType upload.BedType, watermark watermark.WatermarkHandle) (string, error) {
 	strategy := upload.FindStrategy(strategyType)
 	if strategy == nil {
 		runtime.LogError(a.ctx, "Failed to find strategy")
 		return "", errors.New("failed to find strategy")
 	}
 
-	savePath, err := WatermarkByPath(filePath, false)
+	savePath, err := WatermarkByPath(filePath, watermark, false)
 	if err != nil {
 		runtime.LogError(a.ctx, "Failed to watermark by path: "+err.Error())
 		return "", err
@@ -77,8 +76,8 @@ func (a *App) UploadFile(filePath string, strategyType upload.BedType) (string, 
 	return url, nil
 }
 
-func (a *App) Preview(filePath string) (string, error) {
-	savePath, err := WatermarkByPath(filePath, true)
+func (a *App) Preview(filePath string, watermark watermark.WatermarkHandle) (string, error) {
+	savePath, err := WatermarkByPath(filePath, watermark, true)
 	if err != nil {
 		runtime.LogError(a.ctx, "Failed to watermark by path: "+err.Error())
 		return "", err
@@ -87,29 +86,13 @@ func (a *App) Preview(filePath string) (string, error) {
 	return "/static/" + url.QueryEscape(savePath), nil
 }
 
-func WatermarkByPath(filePath string, random bool) (string, error) {
-	configJson, err := loadConfig()
-	if err != nil {
-		return "", err
-	}
-
-	var config AppConfig
-	err = json.Unmarshal([]byte(configJson), &config)
-	if err != nil {
-		return "", err
-	}
-
+func WatermarkByPath(filePath string, wh watermark.WatermarkHandle, random bool) (string, error) {
 	// no need watermark
-	if config.Watermark == nil || !config.Watermark.Check() {
+	if !wh.Check() {
 		return filePath, nil
 	}
 
-	bgImg, err := watermark.OpenImg(filePath)
-	if err != nil {
-		return "", err
-	}
-
-	img, err := config.Watermark.Do(bgImg)
+	img, err := wh.Do(filePath)
 	if err != nil {
 		return "", err
 	}

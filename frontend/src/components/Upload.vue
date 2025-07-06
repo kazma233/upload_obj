@@ -24,6 +24,8 @@ const watermarkConf = ref({
   color: '#000000',
   x: 100,
   y: 100,
+  position: 'LeftTop', // 位置
+  angle: 0, // 旋转角度
 });
 
 const selectedFile = ref('');
@@ -46,14 +48,18 @@ const handleFileSelect = async () => {
 };
 
 const preview = () => {
-  if (!previewTimeout) {
-    previewTimeout = setTimeout(previewInner, 1);
+  if (!selectedFile.value) {
+    console.warn('No file selected for preview');
     return;
   }
 
-  saveConfig();
+  if (!previewTimeout) {
+    previewTimeout = setTimeout(() => previewInner(), 1);
+    return;
+  }
+
   clearTimeout(previewTimeout);
-  previewTimeout = setTimeout(previewInner, 1000);
+  previewTimeout = setTimeout(() => previewInner(), 1000);
 };
 
 
@@ -61,7 +67,7 @@ const previewInner = async () => {
   try {
     previewBlock.value = true;
     previewFile.value = "";
-    previewFile.value = await Preview(selectedFile.value);
+    previewFile.value = await Preview(selectedFile.value, watermarkConf.value);
     previewBlock.value = false;
   } catch (error) {
     console.error('Error preview file:', error);
@@ -71,7 +77,7 @@ const previewInner = async () => {
 
 const uploadFile = async () => {
   try {
-    const url = await UploadFile(selectedFile.value, config.value.type);
+    const url = await UploadFile(selectedFile.value, config.value.type, watermarkConf.value);
     uploadedUrl.value = url;
   } catch (error) {
     console.error('Error upload file:', error);
@@ -124,6 +130,15 @@ const prefixOptions = [
   { label: 'SECOND(2006/01/02/15/04/05)', value: 'SECOND' },
 ];
 
+const positionOptions = [
+  { label: '左上', value: 'LeftTop' },
+  { label: '左下', value: 'LeftBottom' },
+  { label: '右上', value: 'RightTop' },
+  { label: '右下', value: 'RightBottom' },
+  { label: '中间', value: 'Center' },
+  { label: '全屏', value: 'Full' },
+];
+
 </script>
 
 <template>
@@ -132,8 +147,7 @@ const prefixOptions = [
       <n-flex align="center">
         <label>类型: </label>
         <n-flex>
-          <n-select style="width: 200px;" v-model:value="type"
-            :options="[{ label: 'github', value: 'github' }]" />
+          <n-select style="width: 200px;" v-model:value="type" :options="[{ label: 'github', value: 'github' }]" />
         </n-flex>
       </n-flex>
 
@@ -220,6 +234,12 @@ const prefixOptions = [
             </n-flex>
             <n-flex>
               <n-input-number :disabled="previewBlock" v-model:value="watermarkConf.y" placeholder="y"
+                @change="preview" />
+            </n-flex>
+            <n-select :disabled="previewBlock" v-model:value="watermarkConf.position" :options="positionOptions"
+              @change="preview" />
+            <n-flex>
+              <n-input-number :disabled="previewBlock" v-model:value="watermarkConf.angle" placeholder="旋转角度"
                 @change="preview" />
             </n-flex>
           </n-flex>

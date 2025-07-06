@@ -6,8 +6,8 @@ export function LoadConfig() {
   return window['go']['main']['App']['LoadConfig']();
 }
 
-export function Preview(arg1) {
-  return window['go']['main']['App']['Preview'](arg1);
+export function Preview(arg1, arg2) {
+  return window['go']['main']['App']['Preview'](arg1, arg2);
 }
 
 export function SaveConfig(arg1) {
@@ -18,6 +18,6 @@ export function SelectFile() {
   return window['go']['main']['App']['SelectFile']();
 }
 
-export function UploadFile(arg1, arg2) {
-  return window['go']['main']['App']['UploadFile'](arg1, arg2);
+export function UploadFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UploadFile'](arg1, arg2, arg3);
 }
